@@ -1,0 +1,3 @@
+[submodule "dependencies/simple_https_server"]
+	path = dependencies/simple_https_server
+	url = git@github.com:/arch4ngel/simple_https_server
