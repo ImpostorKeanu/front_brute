@@ -1,6 +1,6 @@
 # Purpose
 
-Tool written to facilitate identification of frontable domains. It mainly targets the Fastly CDN while using the shared certificate, however one can use ```-hh``` parameter to specify a particular host header. It should be pretty snappy since it supports multiprocessing. Just use the ```-h```` flag for help.
+Tool written to facilitate identification of frontable domains. It mainly targets the Fastly CDN while using the shared certificate, however one can use ```-hh``` parameter to specify a particular host header. It should be pretty snappy since it supports multiprocessing. Just use the ```-h``` flag for help.
 
 # Usage
 
@@ -24,14 +24,14 @@ The following sections communicate the structure of JSON objects written to disk
 
 #### Successful Transactions (No Python Error Occurred)
 
-The following structure illustrates output stemming from an HTTP transaction that did not produce a Python error.
+The following structure illustrates output stemming from an HTTP transaction that did not produce a Python error. Note that the content member is base64 encoded.
 
 ```json
 {
     "url":"https://frontable.url.com/test.txt",
     "status_code":200,
     "reason":"OK",
-    "content":"c3VjY2Vzcwo=" # base64 encoded response content
+    "content":"c3VjY2Vzcwo="
 }
 ```
 
