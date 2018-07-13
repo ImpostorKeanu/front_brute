@@ -18,19 +18,111 @@ See Architecture Expectations for additional information.
 
 ### Painless Introduction to Domain Fronting
 
-Though no expert on how CDNs function, I view CDN nodes (in terms of domain fronting) as proxies that terminate the initial TCP/SSL/TLS connection initiated by a given user agent and proxies the request along to an origin host under control of an attacker using a distinct tunnel initialized by the CDN node. The request is pivoted from the CDN node to the origin host by issuing a forged HTTP host header in the request, which is hidden from the CDN host at the network layer when SSL/TLS is used. In order to recieve a ```200 OK```, we should have an HTTP/HTTPs server listening on the origin host to serve a file identified by the ```--url-path``` parameter on the host as dictated in the _Important Parameters_ section.
+Domain fronting is a popular means of hiding the destination of a C2 server/network by exploiting insecure functioning of CDN nodes, which often use the value of the host header embedded in an HTTP request as the FQDN as they proxy on behalf of CDN consumers. This is achieved by using a RAT supporing HTTP communication channels and agents that can be configured with a custom host header, such as Meterpreter or Beacon. A typical command-line utility supporting this functionality host header specification is curl, which will be used for demonstrative purposes.
 
-The follwing numbered list communicates the steps a given HTTP request might take when fronting occurs.
+Though no expert on how CDNs function, I view CDN nodes (in terms of domain fronting) as proxies that terminate the initial TCP/SSL/TLS connection initiated by a given user agent and proxies the request along to an origin host under control of an attacker using a distinct TCP connection/tunnel initialized by the CDN node. The CDN node consumes the host header, which has been forged/manipulated by the attacker, and uses that value as the FQDN for the URL of the proxied request. The path specified in the original URL is appended to the new request, which is then sent to the HTTPS(S) server on the origin host. Upon receipt of a responde from the origin host, the CDN will update appropriate values and forward it back to the user agent over the initial TCP/SSL/TLS connection.
 
-1. Request is made from a user agent enabling control of the host header, e.g. ```curl```
- - FQDN in URL points to a frontable domain, i.e. a domain enabling origin identification via the HTTP host header
-2. CDN Node receives the request, negotiating the certificate used to encrypt HTTPS communications via SNI in cleartext
- - HTTP host header is sent over the encrypted channel, preventing network layer identification on the network where the user agent initiated the request
-3. CDN node uses the HTTP host header to select the origin host
- - Creates a new SSL/TLS session with the origin host
- - Proxies the request on behalf of the user agent
-4. Origin host responds to the CDN with content of the requested file (200 OK)
-5. CDN node returns the response to the User Agent
+An important constraint becomes clear from the description above: an attacker must be able to control the HTTP host header in order to perform domain fronting. Meterpreter and Cobalt Strike's beacon satisfy this constraint, though it is easier to observe the intricacies using curl. The following text-based diagram illustrates this.
+
+
+```
+--------------------------------------------------------------------------------------------------
+| curl Command                                                                                   |
+--------------------------------------------------------------------------------------------------
+| curl --insecure -v --header "Host: www.offica365.com``` https://vulnerable.domain.com/test.txt |
+--------------------------------------------------------------------------------------------------
+   |  |
+   |  | <--------[Initial SSL/TLS Tunnel]
+   |  |
+   |  |        ----------------------------------------------
+   |  |        | Request URL: https://vulnerable.domain.com |
+   |  |        ----------------------------------------------
+   |  |        | GET /test.txt                              |
+   |  |        | Host: www.offica365.com                    |
+   |  |        | ...< moar headers >...                     |
+   |  |        ----------------------------------------------
+   |  |
+   |  | <--------[Initial SSL/TLS Tunnel Terminates Here]
+----------------------------------------------------------------------------------
+| CDN Node                                                                       |
+----------------------------------------------------------------------------------
+| 1. Receives request                                                            |
+| 2. FQDN extracted from host header                                             |
+| 3. Path extracted from original URL                                            |
+| 4. New URL constructed: {protocol}://{host header FQDN}/{Original URL PATH}    |
+| 5. Make request to origin server                                               |
+| 6. Upon receit of response, forward back to beacon over initial SSL/TLS Tunnel |
+----------------------------------------------------------------------------------
+   |  | <--------[New SSL/TLS Tunnel]
+   |  |
+   |  |        ------------------------------------------
+   |  |        | Request URL: https://www.offica365.com |
+   |  |        ------------------------------------------
+   |  |        | GET /test.txt                          |
+   |  |        | Host: www.offica365.com                |
+   |  |        | ...< moar headers >...                 |
+   |  |        ------------------------------------------
+   |  |
+----------------------------------------------------------------------------------
+| Origin Host                                                                    |
+----------------------------------------------------------------------------------
+| 1. Receives request                                                            |
+| 2. Responds to CDN node with requested content: success\n                      |
+----------------------------------------------------------------------------------
+```
+
+Below is verbose output from curl when issuing a similar command:
+
+```
+root@somehost:somepath~> curl --insecure --header "Host: offica365.global.ssl.fastly.net" https://vulnerable.domain.com/test.txt
+* successfully set certificate verify locations:                                                                                                                                    [0/282]
+*   CAfile: /etc/ssl/certs/ca-certificates.crt
+  CApath: /etc/ssl/certs
+* TLSv1.2 (OUT), TLS header, Certificate Status (22):
+* TLSv1.2 (OUT), TLS handshake, Client hello (1):
+* TLSv1.2 (IN), TLS handshake, Server hello (2):
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+* TLSv1.2 (OUT), TLS change cipher, Client hello (1):
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+* TLSv1.2 (IN), TLS change cipher, Client hello (1):
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+* SSL connection using TLSv1.2 / ECDHE-RSA-AES128-GCM-SHA256
+* ALPN, server accepted to use h2
+* Server certificate:
+*  subject: C=US; ST=***; L=*******; O=***** Inc.; CN=*.*****.com
+*  start date: Jun 26 00:00:00 2018 GMT
+*  expire date: Aug 21 12:00:00 2018 GMT
+*  issuer: C=US; O=DigiCert Inc; CN=DigiCert SHA2 Secure Server CA
+*  SSL certificate verify ok.
+* Using HTTP2, server supports multi-use
+* Connection state changed (HTTP/2 confirmed)
+* Copying HTTP/2 data in stream buffer to connection buffer after upgrade: len=0
+* Using Stream ID: 1 (easy handle 0x563b4dac9c80)
+> GET /test.txt HTTP/2
+> Host: offica365.global.ssl.fastly.net
+> User-Agent: curl/7.57.0
+> Accept: */*
+>
+* Connection state changed (MAX_CONCURRENT_STREAMS updated)!
+< HTTP/2 200
+< server: SimpleHTTP/0.6 Python/3.6.4
+< content-type: text/plain
+< last-modified: Mon, 09 Jul 2018 20:10:03 GMT
+< accept-ranges: bytes
+< date: Fri, 13 Jul 2018 15:47:28 GMT
+< via: 1.1 varnish
+< x-served-by: cache-dca17736-DCA
+< x-cache: MISS
+< x-cache-hits: 0
+< x-timer: S1531496849.537647,VS0,VE8
+< content-length: 8
+<
+success
+* Connection #0 to host vulnerable.domain.com left intact
+```
 
 ## Important Parameters
 
